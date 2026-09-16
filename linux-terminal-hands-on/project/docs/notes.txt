@@ -1,0 +1,10 @@
+Handover notes
+--------------
+
+- The filters under src/test/filters/exec print information about the machine
+  they run on. They were meant to be piped into one of the scripts in
+  src/main/code, but I never wrote down which one.
+- Several files in src/main/code are leftovers from an earlier attempt. Reading
+  them is faster than guessing from the names.
+- The reporting script does its own hashing and prints the result on the last
+  line. Do not trust a file name to tell you what a file does.

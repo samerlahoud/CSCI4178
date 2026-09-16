@@ -1,0 +1,11 @@
+.DS_Store
+
+# Student output, created during the session
+results.txt
+compare.py
+report_v1.txt
+report_v2.txt
+secret_file.txt
+
+# Instructor material. Never publish to the student repository.
+linux-terminal-lab-solution.md
