@@ -1,49 +1,52 @@
 # %% [markdown]
-# # CSCI 4178, Lecture 14. Comparing detectors on a time-ordered split
+# # CSCI 4178: Comparing Security Detectors
 #
-# **Dalhousie University, Faculty of Computer Science. Fall 2026.**
+# **Work in pairs. About 30 minutes. No ML background or Python editing required.**
 #
-# This notebook is the in-class activity. It trains seven classifiers on fourteen days of
-# connection records and compares them the way a security team would: by a ranking metric, by
-# the share of attacks caught inside an alert budget, and by attack family.
+# Your job is to decide what the results mean for a security team. The code is supplied.
+# Keep your answers on paper or in a separate document. Nothing needs to be typed into code.
 #
-# **You write no Python.** Run the cells in order and read the output. One cell in stage 5
-# asks you to change a single number.
+# **First time in Colab?** Sign in to Google, then click **Connect** if needed. Use the default CPU runtime.
+# Click the triangular **play button** beside a code cell. Wait until it finishes before running the next cell.
+# If Colab warns that this notebook was authored elsewhere, check that it is the course notebook linked by your instructor before running it.
+# A spinner means it is still working. You do not need to understand the Python underneath.
 #
-# **Run one stage at a time.** Do not use *Runtime, Run all*: two cells are answers that are
-# meant to be read after you have written yours down.
+# **Run one stage at a time.** Stop at each **PAUSE** before revealing the next result. Do not use *Run all*.
 #
-# | Stage | Cells | Minutes | What you do |
-# | --- | --- | --- | --- |
-# | 0 | setup | 1 | Load the data. |
-# | 1 | predict | 4 | Rank four models before anything is trained. |
-# | 2 | rank | 9 | Train seven models, read the ranking and its uncertainty. |
-# | 3 | budget | 9 | Move from a ranking metric to an operating point. |
-# | 4 | family | 8 | Find the family nobody detects, and determine why. |
-# | 5 | extras | spare | Importance measures, overfitting, decision boundaries. |
+# | Stage | Time | Your task |
+# | --- | --- | --- |
+# | 0. Setup | 2 min | Run one cell to load the data. |
+# | 1. Predict | 2 min | Choose a model and give a reason. |
+# | 2. Compare | 8 min | Read the ranking and uncertainty bars. |
+# | 3. Budget | 8 min | Explain why different models can tie. |
+# | 4. Missing family | 10 min | Investigate a shared blind spot. |
+# | 5. Optional | Spare time | Choose one extra. Run supplied cells only. |
 #
-# The dataset is synthetic. It was built for the course referenced below and has a realistic
-# intrusion-detection feature schema, fourteen days of time structure, two sites with different
-# base rates, five attack families, a 2.8 per cent attack rate and duplicated records.
+# **The data is synthetic:** simulated connection records over 14 days at two sites.
+# A row is one connection, not a whole incident. These results illustrate evaluation methods, not a product recommendation.
 #
-# ---
-#
-# Derived from **Lab 3a, *Comparing classifiers on a time-ordered split***, in
-# *Machine Learning for Cybersecurity* by Ali Al Bataineh,
-# <https://aalbata.github.io/machine-learning-for-cybersecurity/>.
-# Course text CC BY 4.0, code MIT. The dataset `flows.csv` is fetched from that repository.
-# Restructured into stages for CSCI 4178; the analysis in stages 3 and 4 is new.
+# Derived from **Lab 3a, Comparing classifiers on a time-ordered split**, in
+# [Machine Learning for Cybersecurity](https://aalbata.github.io/machine-learning-for-cybersecurity/)
+# by Ali Al Bataineh. Course text CC BY 4.0, code MIT. The data version is fixed for this activity.
 
 # %% [markdown]
-# ## Stage 0. Setup
+# ## Stage 0. Setup (2 minutes)
 #
-# Imports, then the data. Training uses days 0 to 9 and testing days 10 to 13. Duplicated
-# records are removed before the split, so that no record appears in both parts.
+# **RUN** the next cell once. It loads the data automatically. No upload, install command or GPU is needed in Colab.
+#
+# **LOOK FOR** two lines: training days **0–9**, test days **10–13**.
+# Training means learning from old examples. Testing means checking against later examples whose answers were hidden during training.
+# Exact duplicate rows are removed before splitting.
+#
+# **CHECK** You should see **432 attacks in the test period**. If there is a red error, stop and ask for help.
+# If a later cell says a name is undefined, run the earlier cells in order. If the runtime disconnected, reconnect and repeat the completed stages.
+# If setup is still blocked after two minutes, work with your partner or use the supplied results handout.
 
 # %%
 import os
 import time
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -62,10 +65,14 @@ from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardSc
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
-warnings.filterwarnings("ignore")
 
-URL = "https://raw.githubusercontent.com/aalbata/machine-learning-for-cybersecurity/main/data/flows.csv"
-flows = pd.read_csv(URL).drop_duplicates().reset_index(drop=True)
+
+URL = "https://raw.githubusercontent.com/aalbata/machine-learning-for-cybersecurity/009634e4f6e414550e79ca704a3164020abd9b03/data/flows.csv"
+source = os.environ.get("L14_DATA_PATH", URL)
+try:
+    flows = pd.read_csv(source).drop_duplicates().reset_index(drop=True)
+except Exception as exc:
+    raise RuntimeError("Could not load the course data. Check the connection or use the results handout.") from exc
 
 train = flows[flows["day"] <= 9]
 test = flows[flows["day"] >= 10]
@@ -73,65 +80,44 @@ ytr = train["label"].to_numpy()
 yte = test["label"].to_numpy()
 family = test["attack_type"].to_numpy()
 n_days = test["day"].nunique()
-SEEDS = [0, 1, 2, 3, 4]
+test_days = test["day"].to_numpy()
 
 print(f"training  days 0-9    {len(train):>7,} records   {ytr.sum():>4} attacks")
 print(f"test      days 10-13  {len(test):>7,} records   {yte.sum():>4} attacks   over {n_days} days")
 print(f"attack rate: training {ytr.mean():.3%}, test {yte.mean():.3%}")
-print(f"\ncolumns: {', '.join(flows.columns)}")
+print("Setup complete. Go to Stage 1; write your prediction on paper.")
 
 # %% [markdown]
-# ## Stage 1. Predict
+# ## Stage 1. Predict (2 minutes, no code cell)
 #
-# Nothing has been trained yet. Four of the seven models are listed below, one from each family
-# on the reference slide:
-#
-# | Model | What is fitted |
+# | Model | Intuition |
 # | --- | --- |
-# | `logistic regression` | One weight per feature, summed and passed through the logistic function. |
-# | `Gaussian naive Bayes` | One normal distribution per feature per class; features assumed independent. |
-# | `decision tree` | Nested threshold tests, one feature at a time. Depth limited to 8. |
-# | `random forest` | Average of 300 trees, each on a bootstrap sample and a feature subset. |
+# | Logistic regression | Adds weighted clues into one score. |
+# | Gaussian naive Bayes | Combines how typical each clue is for each class. |
+# | Decision tree | Asks a sequence of yes/no questions. |
+# | Random forest | Averages the opinions of many trees. |
 #
-# Rank them by the average precision you expect each to reach on the test days, best first.
-# Write the four names into the list below, exactly as spelled above, and run the cell. Also
-# write down one sentence saying why you placed the first one first; the sentence is the part
-# that is worth discussing afterwards.
+# **WRITE** which one you expect to rank attacks highest, and one reason. If you wish, rank all four.
+# There is no correct prediction to memorise. We will compare your expectation with measurements.
 #
-# Leaving the list empty is allowed. Stage 2 then skips the comparison.
-
-# %%
-MY_RANKING = [
-    "",  # 1st
-    "",  # 2nd
-    "",  # 3rd
-    "",  # 4th
-]
-
-FOUR = ["logistic regression", "Gaussian naive Bayes", "decision tree", "random forest"]
-picked = [m.strip() for m in MY_RANKING if m.strip()]
-unknown = [m for m in picked if m not in FOUR]
-if not picked:
-    print("No prediction recorded. Stage 2 will skip the comparison.")
-elif unknown:
-    print("Not a model name in the table above:", ", ".join(unknown))
-elif len(set(picked)) != len(picked):
-    print("A name is repeated. Each model appears once.")
-else:
-    print("Prediction recorded:")
-    for i, m in enumerate(picked, 1):
-        print(f"  {i}. {m}")
+# **Metric key for the rest of the activity**
+#
+# - **Average precision (AP):** how well attacks concentrate near the top of the ranked list across many cutoffs. Higher is better, up to 1. It is **not accuracy** or recall at one alert budget.
+# - **Recall:** the fraction of actual attack records that receive an alert. Recall 0.60 means about 60 of every 100 attack records were flagged.
+# - **Precision:** the fraction of alerts that are actual attacks. Precision 0.60 means about 60 of every 100 alerts are correct.
+# - **Budget:** the number of records the team can investigate **each day**.
+#
+# Imagine reading a queue from the top: good ranking puts attacks early. The budget tells you where you must stop reading.
 
 # %% [markdown]
-# ## Stage 2. Rank
+# ## Stage 2. Compare the detectors (8 minutes)
 #
-# ### 2.1 Features
+# ### 2.1 Prepare the measurements
 #
-# The skewed duration, byte, packet and connection-count columns are log-transformed, every
-# numeric column is standardized, and the categorical columns are one-hot encoded. Every step is
-# fitted on the training days only. Scaling matters for logistic regression, k-nearest neighbors
-# and the support vector machine; it is harmless for the tree models, whose splits depend only on
-# the order of the values.
+# **RUN** the next cell. It converts the recorded features into numbers the models can use.
+# It learns the conversion from training data only. A feature is a measured clue, such as bytes sent or failed logins.
+#
+# **LOOK FOR** the number of training rows, test rows and encoded features. You do not need to interpret the transformation code.
 
 # %%
 skewed = ["duration", "src_bytes", "dst_bytes", "packets", "count", "srv_count"]
@@ -150,21 +136,26 @@ feature_names = [n.split("__", 1)[1] for n in prep.get_feature_names_out()]
 print(f"{Xtr.shape[0]:,} training rows and {Xte.shape[0]:,} test rows, {Xtr.shape[1]} features after encoding")
 
 # %% [markdown]
-# ### 2.2 Seven classifiers
+# ### 2.2 Train and compare
 #
-# Every model produces a score for each test record. For the support vector machine the score is
-# the value of its decision function; for the others it is a predicted probability. Average
-# precision and recall inside a budget depend only on the ordering of the scores, so the two
-# kinds of score are comparable.
+# **RUN** the next cell. It may take a minute or more. A line appears as each model finishes.
+# Each model sees the same training records and gets scored on the same later records.
+# We use one fixed random seed to keep the classroom comparison reproducible.
 #
-# Models with a random component are trained once per seed, with five seeds. The others are
-# deterministic and their standard deviation is zero.
+# **READ** the table by columns:
 #
-# Several models give many records exactly the same score. When the records tied at the cutoff do
-# not all fit inside the budget, which of them is alerted is arbitrary, so `recall_at` reports the
-# expected recall with ties broken at random.
+# | Column | Meaning |
+# | --- | --- |
+# | `ap` | Ranking quality. Start here. Higher is better. |
+# | `recall20`, `recall100` | Share of attacks found at 20 or 100 alerts **each day**. We use these in stage 3. |
+# | `fit_seconds` | Time to learn from the training examples. |
+# | `predict_seconds` | Time to score all test records. |
 #
-# This cell takes about a minute.
+# **WRITE** the model with the highest AP. Did it match your prediction?
+# Times depend on the machine, so compare them within your run.
+#
+# Technical detail, optional: scores need only order records. They are not necessarily calibrated probabilities.
+# If scores tie at the daily cutoff, the notebook averages over random choices among those tied records.
 
 # %%
 def make(name, seed):
@@ -179,57 +170,74 @@ def make(name, seed):
     }[name]
 
 
-RANDOM = {"decision tree", "random forest", "gradient boosting"}
 NAMES = ["logistic regression", "k-nearest neighbors", "SVM (RBF kernel)", "Gaussian naive Bayes",
          "decision tree", "random forest", "gradient boosting"]
+FOUR = ["logistic regression", "Gaussian naive Bayes", "decision tree", "random forest"]
 
 
 def score_of(model, X):
     return model.predict_proba(X)[:, 1] if hasattr(model, "predict_proba") else model.decision_function(X)
 
 
+def daily_alert_weights(score, days, k):
+    """Exactly min(k, available records) slots per day, fractional weights for random ties."""
+    score, days = np.asarray(score), np.asarray(days)
+    if len(score) != len(days) or int(k) != k or k < 0:
+        raise ValueError("Scores and days must align; k must be a nonnegative integer.")
+    alert = np.zeros(len(score), dtype=float)
+    for day in np.unique(days):
+        idx = np.flatnonzero(days == day)
+        slots = min(int(k), len(idx))
+        if slots == 0:
+            continue
+        values = score[idx]
+        cutoff = np.sort(values)[-slots]
+        above, tied = values > cutoff, values == cutoff
+        weights = above.astype(float)
+        weights[tied] = (slots - above.sum()) / tied.sum()
+        alert[idx] = weights
+    return alert
+
+
 def recall_at(score, k):
-    """Expected recall when the k highest-scoring records are alerted, ties broken at random."""
-    cutoff = np.sort(score)[::-1][k - 1]
-    above = score > cutoff
-    tied = score == cutoff
-    alert = above.astype(float)
-    alert[tied] = (k - above.sum()) / tied.sum()
-    return alert[yte == 1].mean(), alert
+    alert = daily_alert_weights(score, test_days, k)
+    return float(alert[yte == 1].mean()), alert
 
 
-rows, scores0, seconds = [], {}, {}
+rows, scores0 = [], {}
 for name in NAMES:
-    t0 = time.time()
-    for s in (SEEDS if name in RANDOM else [0]):
-        model = make(name, s).fit(Xtr, ytr)
-        sc = score_of(model, Xte)
-        r20, _ = recall_at(sc, 20 * n_days)
-        r100, alert = recall_at(sc, 100 * n_days)
-        rows.append(dict(model=name, seed=s, ap=average_precision_score(yte, sc),
-                         recall20=r20, recall100=r100,
-                         **{f"fam_{f}": alert[family == f].mean()
-                            for f in ["scan", "bruteforce", "dos", "exfil", "c2beacon"]}))
-        if s == 0:
-            scores0[name] = sc
-    seconds[name] = time.time() - t0
+    t0 = time.perf_counter()
+    model = make(name, 0).fit(Xtr, ytr)
+    fit_time = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    sc = score_of(model, Xte)
+    predict_time = time.perf_counter() - t0
+    r20, _ = recall_at(sc, 20)
+    r100, alert = recall_at(sc, 100)
+    rows.append(dict(model=name, ap=average_precision_score(yte, sc),
+                     recall20=r20, recall100=r100,
+                     fit_seconds=fit_time, predict_seconds=predict_time,
+                     **{f"fam_{f}": alert[family == f].mean()
+                        for f in ["scan", "bruteforce", "dos", "exfil", "c2beacon"]}))
+    scores0[name] = sc
+    print(f"Finished: {name}", flush=True)
 
 runs = pd.DataFrame(rows)
-table = runs.groupby("model", sort=False).agg(ap=("ap", "mean"), ap_sd=("ap", "std"),
-                                              recall20=("recall20", "mean"),
-                                              recall100=("recall100", "mean")).fillna(0.0)
-table["seconds"] = pd.Series(seconds)
-print(table.round(3).to_string())
+table = runs.set_index("model")[["ap", "recall20", "recall100", "fit_seconds", "predict_seconds"]]
+print("\nComparison (one fixed seed, same split):")
+print(table.sort_values("ap", ascending=False).round(3).to_string())
 
 # %% [markdown]
-# ### 2.3 How much of that ordering is real
+# ### 2.3 How much should we trust a small gap?
 #
-# The standard deviation above measures only the randomness inside training. It says nothing
-# about how much the scores would change on other test days. A bootstrap over test records gives
-# a view of that second source: it resamples the test set with replacement 200 times and
-# recomputes average precision each time. Records from the same host and day are not independent,
-# so the interval below is narrower than it should be, but it shows which differences are large
-# compared with sampling noise.
+# **RUN** the next two cells. The dot is a model's AP. The horizontal bar shows how that AP varies when we repeatedly resample these same test records.
+# This is called a **bootstrap interval**. It helps us see sampling uncertainty without doing the statistics by hand.
+#
+# **LOOK FOR** a pair of bars that overlap. Their point scores differ, but this picture alone is not enough to make a confident claim about the difference.
+# Overlapping bars do not prove the models are equivalent. A formal comparison would analyse their paired score differences.
+#
+# These bars reuse the same four days. They do **not** tell us how well the models will work at a different site or next month.
+# Related records can also make these simple intervals too optimistic.
 
 # %%
 rng = np.random.default_rng(0)
@@ -261,35 +269,26 @@ measured = [m for m in table["ap"].sort_values(ascending=False).index if m in FO
 print("measured order of the four models in stage 1, best first:")
 for i, m in enumerate(measured, 1):
     print(f"  {i}. {m:<22} AP {table.loc[m, 'ap']:.3f}   interval [{boot[m][0]:.3f}, {boot[m][1]:.3f}]")
-
-if picked and not unknown and len(set(picked)) == len(picked):
-    hits = sum(a == b for a, b in zip(picked, measured))
-    print(f"\nyour prediction: {' > '.join(picked)}")
-    print(f"positions correct: {hits} of {len(picked)}")
-    adjacent = [(a, b) for a, b in zip(picked, picked[1:])
-                if boot[a][0] <= boot[b][1] and boot[b][0] <= boot[a][1]]
-    for a, b in adjacent:
-        print(f"note: the intervals of {a} and {b} overlap, so that one of your"
-              f" comparisons cannot be scored either way")
-# %% [markdown]
-# ### Stage 2 questions
-#
-# 1. Which parts of the ordering does the figure support, and which does it not? Give one
-#    comparison that the intervals leave unresolved.
-# 2. The `seconds` column spans two orders of magnitude, and the three random models are fitted
-#    once per seed. Describe a deployment in which that ratio decides the choice.
-# 3. The interval comes from resampling test records. Which source of variation does it not
-#    cover?
+print("Compare this measured order with your written prediction.")
 
 # %% [markdown]
-# ## Stage 3. Budget
+# ### PAUSE 2: Write three short answers
 #
-# A security team cannot investigate every record it scores. It investigates the highest-scoring
-# ones, as many as its staffing allows. That number is the **alert budget**, and it is set by the
-# team, not by the model.
+# 1. Which model has the highest measured AP? Name one pair whose uncertainty bars overlap.
+# 2. A detector scores traffic continuously but retrains only at night. Which timing column matters most while it is running?
+# 3. Do these bars establish performance on a new network? Answer yes/no and explain in one sentence.
 #
-# The table below repeats the two recall columns from stage 2: recall when the 20 highest-scoring
-# records per day are alerted, and when the 100 highest-scoring records per day are alerted.
+# **Move on when you can explain one row of the table to your partner.**
+
+# %% [markdown]
+# ## Stage 3. The team's alert budget (8 minutes)
+#
+# The team investigates the **20 highest-scoring records each day**, or the **100 highest each day** if more staff are available.
+# It cannot carry unused capacity from one day into another. The notebook applies the cutoff separately to each day.
+#
+# **RUN** the next cell. Read the two recall columns and the counts under the table.
+#
+# **LOOK FOR** several models tied near 0.185 at the smaller budget. AP considers the wider ranking, while this budget inspects only its top few records.
 
 # %%
 budget = pd.DataFrame({
@@ -317,34 +316,36 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ### Stage 3 questions
+# ### PAUSE 3: Before the answer cell
 #
-# 1. Five of the seven models report the same recall at 20 alerts per day. Work out that number
-#    from the counts printed above, before running the next cell.
-# 2. Account for the tie. Average precision across those five models spans 0.52 to 0.70.
-# 3. Five times the budget. How many times the recall? Give the recall bought by one additional
-#    alert, above and below the tie.
+# 1. Four days at 20 alerts per day allow at most **___ alerts**. There are **432 attack records**.
+#    Even if every alert catches an attack, recall can be at most **___ / 432 = ___**.
+# 2. If several models fill every available slot with an attack, can a better ranking make them catch more attacks without more slots?
+# 3. Predict: will five times as many alerts necessarily catch five times as many attacks?
 #
-# Write your answers down. The next cell is the answer to question 1 and a measurement for
-# question 3.
+# **HINT:** 0.185 means 18.5%, not 0.185%.
+#
+# **NOW RUN** the next cell to check. The dashed line is the ideal upper bound. The solid line is the measured model.
+# After seeing the result, complete: “Increasing the budget also brings in more ___.”
 
 # %%
 ceiling = 20 * n_days / yte.sum()
-print(f"a perfect ranking fills {20 * n_days} alerts with attacks, so recall cannot exceed")
+print(f"For this dataset, each day has at least 20 attacks. A perfect ranking fills {20 * n_days} alerts with attacks, so recall cannot exceed")
 print(f"    {20 * n_days} / {yte.sum()} = {ceiling:.3f}")
 print(f"models sitting exactly on it: {(np.isclose(table['recall20'], ceiling)).sum()} of {len(table)}")
 
 best_name = table["ap"].idxmax()
 sc_best = scores0[best_name]
 ks = np.arange(5, 205, 5)
-curve = np.array([recall_at(sc_best, int(k * n_days))[0] for k in ks])
-cap = np.minimum(1.0, ks * n_days / yte.sum())
+curve = np.array([recall_at(sc_best, int(k))[0] for k in ks])
+attacks_per_day = np.array([yte[test_days == day].sum() for day in np.unique(test_days)])
+cap = np.array([np.minimum(k, attacks_per_day).sum() / yte.sum() for k in ks])
 
 fig, ax = plt.subplots(figsize=(8, 3.6))
 ax.plot(ks, cap, "--", color="#8a8a8a", lw=1.4, label="ceiling: every alert is an attack")
 ax.plot(ks, curve, color="#bd991f", lw=2.2, label=f"{best_name}")
 for k in (20, 100):
-    r = recall_at(sc_best, int(k * n_days))[0]
+    r = recall_at(sc_best, int(k))[0]
     ax.plot([k], [r], "o", color="#4a5a6a", zorder=3)
     ax.annotate(f"{k}/day\nrecall {r:.3f}", (k, r), textcoords="offset points", xytext=(8, -14), fontsize=8.5)
 ax.set_xlabel("alert budget, alerts per day")
@@ -357,21 +358,31 @@ for side in ("top", "right"):
 plt.tight_layout()
 plt.show()
 
-r20 = recall_at(sc_best, 20 * n_days)[0]
-r100 = recall_at(sc_best, 100 * n_days)[0]
+r20 = recall_at(sc_best, 20)[0]
+r100 = recall_at(sc_best, 100)[0]
 extra = 100 * n_days - 20 * n_days
 print(f"{best_name}: recall {r20:.3f} at 20 per day, {r100:.3f} at 100 per day, a factor of {r100 / r20:.2f}")
-print(f"below the ceiling every alert is an attack and buys 1/{yte.sum()} = {1 / yte.sum():.4f} recall")
+print(f"while every selected record is an attack, each alert adds 1/{yte.sum()} = {1 / yte.sum():.4f} recall")
 print(f"the {extra} additional alerts buy {(r100 - r20) / extra:.4f} recall each, "
       f"which is {(r100 - r20) / extra * yte.sum():.0%} of that")
 print(f"their precision is {(r100 - r20) * yte.sum() / extra:.3f}")
 
 # %% [markdown]
-# ## Stage 4. Family
+# ## Stage 4. A shared blind spot (10 minutes)
 #
-# An aggregate score over all attacks hides which attacks are caught. The table below gives, for
-# each model, the share of each family's test records that fall inside a budget of 100 alerts per
-# day.
+# An overall score can hide a family of attacks. **RUN** the next cell and read each column as one family.
+# Each value is the fraction of that family's attack records caught at **100 alerts per day**.
+#
+# | Family | Plain-language meaning |
+# | --- | --- |
+# | `scan` | Probing hosts or services |
+# | `bruteforce` | Repeated login guesses |
+# | `dos` | Traffic intended to disrupt service |
+# | `exfil` | Sending data out |
+# | `c2beacon` | An infected device checking in with a command-and-control server |
+#
+# **WRITE** the family with low recall across all models and how many of the 432 attacks it represents.
+# A value near zero means few were caught. It does not mean the family was absent from the test data.
 
 # %%
 fam_table = runs.groupby("model", sort=False)[[c for c in runs.columns if c.startswith("fam_")]].mean()
@@ -399,20 +410,22 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ### Stage 4 questions
+# ### PAUSE 4: Two possible explanations
 #
-# One family is close to zero for every one of the seven models, and it is the largest family in
-# the test period. Two explanations are available, and they call for different responses.
+# **A. Missing clues:** the recorded measurements do not distinguish this family from normal traffic.
+# We may need extra information, such as repeated connections from the same host over time.
 #
-# **A. The information is not in the features.** Every column here describes a single connection.
-# If what distinguishes this family is a pattern across many connections, no model fitted on
-# these columns can recover it, and the response is to collect a different feature.
+# **B. Missing training examples:** the training period contains no labelled examples of this family.
+# The measurements might help if the learner gets relevant examples.
 #
-# **B. The class is not in the training labels.** A supervised model estimates a boundary between
-# the classes it was shown. If this family never appears in the training days, the model was never
-# asked to separate it from normal traffic, and the response is a labelling and retraining problem.
+# **DISCUSS** these two checks before running the next cell:
 #
-# Before running the next cell: which measurement would distinguish A from B?
+# 1. Count this family in training and test. What would a zero in training tell us?
+# 2. As a diagnostic only, let a model learn from some labelled examples of the missed family, then test on other examples from that period. If ranking improves, what does that suggest about A?
+#
+# **WRITE** your prediction, then **RUN** the next cell.
+# It splits the later records into five groups, learns from four and scores the held-out group in turn.
+# This is a diagnostic after inspecting the failure, not a new forecast of performance on future days.
 
 # %%
 fam_period = pd.crosstab(flows["attack_type"], np.where(flows["day"] <= 9, "training days", "test days"))
@@ -432,57 +445,48 @@ pipe = make_pipeline(
 cv = cross_val_score(pipe, sub[skewed + plain + categorical], y_sub,
                      cv=StratifiedKFold(5, shuffle=True, random_state=0), scoring="average_precision")
 
-print(f"\nSame features, same model, {target} records labelled and present in training:")
+print(f"\nDiagnostic only: same features and forest, {target} versus normal within the later period:")
 print(f"    average precision {cv.mean():.3f} (5-fold, sd {cv.std():.3f}), base rate {y_sub.mean():.2%}")
 print(f"In stage 2, trained on days 0 to 9 where {target} does not occur:")
 for n in fam_table.index:
     print(f"    {n:<22} recall {fam_table.loc[n, target]:.2f}")
 
 # %% [markdown]
-# ### What that measurement shows
+# ### Reading the diagnosis
 #
-# The features separate this family well once the family is labelled in the training data:
-# average precision around 0.8 at a base rate under 2 per cent. The failure in stage 2 is
-# therefore explanation **B**. The detector was never shown the class, so it never learned a
-# boundary around it, and no choice of classifier or threshold repairs that.
+# The family has **0 training examples** and **180 test examples**.
+# With labelled examples of this family, the same feature set supports much better ranking in the diagnostic experiment.
+# This supports **B as an important explanation here**. The measurements do contain useful clues.
 #
-# Two consequences worth stating precisely.
+# The diagnostic also changes the task: it compares this family with normal traffic within the later period.
+# It does **not** prove that missing labels are the only cause, or that retraining would reach this AP on future days.
+# An unseen family can sometimes be detected if it shares clues with known attacks. There is no guarantee either way.
 #
-# 1. The number reported in stage 2 is not an estimate of performance on next week's traffic.
-#    It is an estimate of performance on next week's traffic **assuming the same attack families
-#    in the same proportions**. That assumption failed inside a fourteen-day window of synthetic
-#    data built for a course.
-# 2. A detector cannot tell you that this happened. Nothing in the output of stage 2 announces a
-#    new family; the recall column simply went down.
+# **WRITE your recommendation:**
+# “Before deploying, I would collect ___, test on ___, and monitor ___.”
 #
-# **Open questions.**
+# **Suggested direction:** collect independently investigated examples of missed attacks, evaluate on later untouched days, and monitor misses by family as well as total alerts.
 #
-# - What would make a new family visible, given that the detector will not report it?
-# - The usual answer is unsupervised anomaly detection, which requires no labels. Lab 4 of the
-#   same course measures it on this family: isolation forest recall 0.0, one-class SVM 0.0, local
-#   outlier factor 0.13. Separable with labels, and not an outlier without them. Why would both
-#   be true at once?
-# - Beaconing in a real network is identified by the regularity of a host's connections over
-#   hours. No column here measures anything across connections. What would that feature cost to
-#   collect, and what delay would it add to detection?
-# %% [markdown]
-# ## Stage 5. Extras
-#
-# Three items, harder than stages 1 to 4, for pairs that reach this point. Each is one cell.
+# **DISCUSS:** how could you discover a missed family? Consider incident reports, another detector, or investigation of a sample of unflagged traffic.
+# A low alert count alone does not establish that the network is safe.
 
 # %% [markdown]
-# ### 5a. Two measures of feature importance
+# ## Stage 5. Optional extras
 #
-# A column of pure noise is added to the data and the forest is trained again. The column is
-# random, so it carries no information about the label. Two importance measures are computed for
-# it:
+# Choose **one** if you finish early. All code is supplied, including the comparison of different neighbour counts.
+# No edits are needed. The core activity ends at stage 4.
+
+# %% [markdown]
+# ### 5a. Which clues actually help?
 #
-# - **impurity importance**, the total decrease in Gini impurity produced by splits on the column,
-#   averaged over trees, computed on the training data;
-# - **permutation importance**, the average precision lost on the test data when the column is
-#   shuffled.
+# **RUN** the next cell. It adds a random noise column and measures “importance” in two ways.
 #
-# Which of the two would you put in a report, and what is the other one measuring?
+# - **Impurity importance:** how much the forest used a column to separate training examples.
+# - **Permutation importance:** how much held-out AP drops when the column's values are shuffled.
+#
+# **WRITE:** a noise column can help a model memorise training data. Which measure is better evidence of usefulness on held-out records?
+# Read the printed noise row. The two scales differ, so compare the interpretation rather than the bar lengths directly.
+# Neither measure proves causation. Correlated clues can also hide each other's usefulness.
 
 # %%
 noise_rng = np.random.default_rng(1)
@@ -520,13 +524,17 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ### 5b. Underfitting and overfitting
+# ### 5b. Learning patterns or memorising examples?
 #
-# The depth of a decision tree controls how complex it can be. Trees of increasing depth are
-# trained and scored on the training days and on the test days.
+# **RUN** the next cell. A deeper tree can ask more questions.
+# The training curve shows performance on familiar examples. The test curve shows performance on later examples.
 #
-# The curve has a maximum. Selecting the depth at that maximum from this plot is a methodological
-# error. Name it, and say what should be done instead.
+# **LOOK FOR:** training performance keeps improving while test performance eventually gets worse.
+# That is **overfitting**: learning details that do not carry over.
+#
+# **WRITE:** why would choosing the best depth from this test graph make the test less trustworthy?
+# **HINT:** a final exam stops being an independent exam if you use its answers to choose what to learn.
+# Use separate validation days for model choices, then evaluate on untouched test days.
 
 # %%
 depths = list(range(1, 21))
@@ -559,18 +567,15 @@ print(f"depth {best_depth:2d}: train {depth_train[best_depth - 1]:.3f}  test {de
 print(f"depth 20: train {depth_train[-1]:.3f}  test {depth_test[-1]:.3f}")
 
 # %% [markdown]
-# ### 5c. Decision boundaries
+# ### 5c. What shape does each model draw?
 #
-# Four models are trained on two features only, so that the boundary each draws can be seen:
-# `log(1 + count)` and `serror_rate`, the share of connections with SYN errors. The shading is the
-# predicted probability of an attack over a grid. Black points are attacks, white points are
-# normal records.
+# **RUN** the next cell. To make a picture possible, models use just two features here.
+# Black points are attacks, white points are normal records. Red shading means a higher attack score.
 #
-# The lecture showed six models on these same two features. Two questions here.
+# **MATCH:** which model makes rectangular steps? Which follows nearby examples? Which makes smooth curves?
+# Use the lecture reference table. Explain one match to your partner.
 #
-# One of the four shapes below is not supported by the data: which, and why does that model draw
-# it at all? And the lecture's random forest panel is this tree's shape at a finer grain: what
-# would this panel look like at depth 12 instead of 4, and what does 5b say about doing that?
+# A two-feature picture helps explain a mechanism. It does not explain the entire model's score with all features.
 
 # %%
 def two_features(df):
@@ -606,42 +611,35 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ### 5d. One number to change
+# ### 5d. One neighbour or many?
 #
-# `K_NEIGHBORS` is the number of neighbours k-nearest neighbors votes over. It is 25 in stage 2.
-# Set it to 1, run the cell, then set it to 200 and run it again.
+# **PREDICT** whether one neighbour will give a more or less detailed ranking than 25 neighbours.
+# Then **RUN** the next cell once. It compares **k = 1, 25 and 200** automatically.
 #
-# Predict the direction of the change in average precision before each run, and account for what
-# you see. A score produced by k = 1 can take only two values.
+# **LOOK FOR** the number of distinct scores. With one neighbour the vote is only 0 or 1, creating many ties.
+# More neighbours allow more score levels but may smooth away useful local patterns.
+#
+# **WRITE** one reason why more neighbours need not always improve AP.
 
 # %%
-K_NEIGHBORS = 25
-
-knn = KNeighborsClassifier(n_neighbors=K_NEIGHBORS).fit(Xtr, ytr)
-sc_knn = knn.predict_proba(Xte)[:, 1]
-print(f"k = {K_NEIGHBORS}")
-print(f"  average precision   {average_precision_score(yte, sc_knn):.3f}   (k = 25 in stage 2: {table.loc['k-nearest neighbors', 'ap']:.3f})")
-print(f"  recall @ 100/day    {recall_at(sc_knn, 100 * n_days)[0]:.3f}")
-print(f"  distinct score values {len(np.unique(sc_knn))}")
+for k in [1, 25, 200]:
+    knn = KNeighborsClassifier(n_neighbors=k).fit(Xtr, ytr)
+    sc_knn = knn.predict_proba(Xte)[:, 1]
+    print(f"k = {k:3d} | AP {average_precision_score(yte, sc_knn):.3f} | "
+          f"recall @ 100/day {recall_at(sc_knn, 100)[0]:.3f} | "
+          f"distinct scores {len(np.unique(sc_knn))}")
 
 # %% [markdown]
-# ## Close
+# ## Your four-line report
 #
-# What this activity measured, in order:
+# 1. **Ranking:** the highest measured AP was ___; a small gap deserves caution because ___.
+# 2. **Capacity:** at 20 alerts/day, the recall upper bound is ___; the limit comes from ___.
+# 3. **Coverage:** ___ was often missed; the diagnostic suggests ___.
+# 4. **Next step:** before deployment, I would ___.
 #
-# 1. A ranking of seven models, and how much of that ranking survives its own uncertainty.
-# 2. An operating point at which five of the seven are indistinguishable, because the alert
-#    budget and not the model determines recall there.
-# 3. A family of attacks that no model detects, and a measurement showing the cause is the
-#    absence of the class from the training labels rather than the absence of information from
-#    the features.
+# If you can explain these four lines without reading the code, you have completed the activity.
 #
-# Optional, same dataset, same pattern, in the same course:
-#
-# - **Lab 4, anomaly detection.** Unsupervised methods on this family: isolation forest 0.0,
-#   one-class SVM 0.0, local outlier factor 0.13.
-# - **Lab 2, leakage.** The same model and the same records score 0.86 under a random split and
-#   0.52 under a time-ordered split.
-# - **Lab 11, audit.** Per-site error rates with intervals, and a generated model card.
-#
-# <https://aalbata.github.io/machine-learning-for-cybersecurity/>
+# Optional follow-up: [Machine Learning for Cybersecurity](https://aalbata.github.io/machine-learning-for-cybersecurity/),
+# Lab 4 on anomaly detection, Lab 2 on evaluation leakage, or Lab 11 on auditing errors.
+# These source labs are more technical. Reading their explanations and outputs is sufficient.
+
