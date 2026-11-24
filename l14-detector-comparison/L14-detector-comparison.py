@@ -92,8 +92,8 @@ print("Setup complete. Go to Stage 1; write your prediction on paper.")
 #
 # | Model | Intuition |
 # | --- | --- |
-# | Logistic regression | Adds weighted clues into one score. |
-# | Gaussian naive Bayes | Combines how typical each clue is for each class. |
+# | Logistic regression | Adds weighted features into one score. |
+# | Gaussian naive Bayes | Combines how typical each feature is for each class. |
 # | Decision tree | Asks a sequence of yes/no questions. |
 # | Random forest | Averages the opinions of many trees. |
 #
@@ -115,7 +115,7 @@ print("Setup complete. Go to Stage 1; write your prediction on paper.")
 # ### 2.1 Prepare the measurements
 #
 # **RUN** the next cell. It converts the recorded features into numbers the models can use.
-# It learns the conversion from training data only. A feature is a measured clue, such as bytes sent or failed logins.
+# It learns the conversion from training data only. A feature is a single recorded measurement, such as bytes sent or failed logins.
 #
 # **LOOK FOR** the number of training rows, test rows and encoded features. You do not need to interpret the transformation code.
 
@@ -412,7 +412,7 @@ plt.show()
 # %% [markdown]
 # ### PAUSE 4: Two possible explanations
 #
-# **A. Missing clues:** the recorded measurements do not distinguish this family from normal traffic.
+# **A. Missing features:** the recorded measurements do not distinguish this family from normal traffic.
 # We may need extra information, such as repeated connections from the same host over time.
 #
 # **B. Missing training examples:** the training period contains no labelled examples of this family.
@@ -456,11 +456,11 @@ for n in fam_table.index:
 #
 # The family has **0 training examples** and **180 test examples**.
 # With labelled examples of this family, the same feature set supports much better ranking in the diagnostic experiment.
-# This supports **B as an important explanation here**. The measurements do contain useful clues.
+# This supports **B as an important explanation here**. The features do carry useful information.
 #
 # The diagnostic also changes the task: it compares this family with normal traffic within the later period.
 # It does **not** prove that missing labels are the only cause, or that retraining would reach this AP on future days.
-# An unseen family can sometimes be detected if it shares clues with known attacks. There is no guarantee either way.
+# An unseen family can sometimes be detected if it shares features with known attacks. There is no guarantee either way.
 #
 # **WRITE your recommendation:**
 # “Before deploying, I would collect ___, test on ___, and monitor ___.”
@@ -477,7 +477,7 @@ for n in fam_table.index:
 # No edits are needed. The core activity ends at stage 4.
 
 # %% [markdown]
-# ### 5a. Which clues actually help?
+# ### 5a. Which features actually help?
 #
 # **RUN** the next cell. It adds a random noise column and measures “importance” in two ways.
 #
@@ -486,7 +486,7 @@ for n in fam_table.index:
 #
 # **WRITE:** a noise column can help a model memorise training data. Which measure is better evidence of usefulness on held-out records?
 # Read the printed noise row. The two scales differ, so compare the interpretation rather than the bar lengths directly.
-# Neither measure proves causation. Correlated clues can also hide each other's usefulness.
+# Neither measure proves causation. Correlated features can also hide each other's usefulness.
 
 # %%
 noise_rng = np.random.default_rng(1)
