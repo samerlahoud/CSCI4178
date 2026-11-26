@@ -1,6 +1,6 @@
 # L14: Comparing security detectors
 
-You can work in pairs for about 30 minutes.
+You can work in pairs.
 **No Python writing or editing, including optional exercises.** You can simply run supplied cells and write your answers in a separate document.
 
 ## Files
